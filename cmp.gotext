@@ -1,0 +1,259 @@
+package main
+
+import (
+    "strconv"
+	"strings"
+	"time"
+
+    "github.com/arithran/apicmp/module"
+    "github.com/google/go-cmp/cmp"
+)
+{{range .}}
+
+func compare{{.Name}}(one, two {{.Name}}) (module.Diff, bool) {
+    {{range .Fields}}
+	{{if eq .FieldType "bool" "int" "int8" "int16" "int32" "int64" "float32" "float64" "string"}}
+	if one.{{.Name}} != two.{{.Name}} {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: rawToString(one.{{.Name}}),
+			Val2: rawToString(two.{{.Name}}),
+		}, false
+	}
+
+	{{else if eq .FieldType "[]string"}}
+	if !compareStringSlice(one.{{.Name}}, two.{{.Name}}) {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: maybeJoin(one.{{.Name}}),
+			Val2: maybeJoin(two.{{.Name}}),
+		}, false
+	}
+	{{else if eq .FieldType "map[string]string"}}
+	compareMapString
+	if !compareMapString(one.{{.Name}}, two.{{.Name}}) {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: mapToString(one.{{.Name}}),
+			Val2: mapToString(two.{{.Name}}),
+		}, false
+	}
+	{{else if eq .FieldType "map[string]map[string]string"}}
+	if !compareComplexMap(one.{{.Name}}, two.{{.Name}}) {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: complexMapToString(one.{{.Name}}),
+			Val2: complexMapToString(two.{{.Name}}),
+		}, false
+	}
+	{{else if eq .FieldType "time.Time"}}
+	if !compareTime(one.{{.Name}}, two.{{.Name}}) {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: rawToString(one.{{.Name}}),
+			Val2: rawToString(two.{{.Name}}),
+		}, false
+	}
+	{{else if ne .StructName ""}}
+		{{if .IsStructSlice}}
+	if len(one.{{.Name}}) != len(two.{{.Name}}) {
+		return module.Diff{
+			Path: "len({{.Name}})",
+			Val1: rawToString(one.{{.Name}}),
+			Val2: rawToString(two.{{.Name}}),
+		}, false
+	}
+	for i := range one.{{.Name}} {
+		if {{.VarName}}Diff, ok := compare{{.Name}}(one.{{.Name}}[i], two.{{.Name}}[i]); !ok {
+			return module.Diff{
+				{{if eq .JSONName ""}}
+				Path: fmt.Sprintf("%s[%d].%s", "{{.Name}}", i, {{.VarName}}Diff.Path),
+				{{else}}
+				Path: fmt.Sprintf("%s[%d].%s", "{{.JSONName}}", i, {{.VarName}}Diff.Path),
+				{{end}}
+				Val1: {{.VarName}}Diff.Val1,
+				Val2: {{.VarName}}Diff.Val2,
+			}, false
+		}
+	}
+		{{else}}
+	if {{.VarName}}Diff, ok := compare{{.StructName}}(one.{{.Name}}, two.{{.Name}}); !ok {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: fmt.Sprintf("%s.%s", "{{.Name}}", {{.VarName}}Diff.Path),
+			{{else}}
+			Path: fmt.Sprintf("%s.%s", "{{.JSONName}}", {{.VarName}}Diff.Path),
+			{{end}}
+			Val1: {{.VarName}}Diff.Val1,
+			Val2: {{.VarName}}Diff.Val2,
+		}, false
+	}
+		{{end}}
+	{{else}}
+	if !compare(one.{{.Name}}, two.{{.Name}}) {
+		return module.Diff{
+			{{if eq .JSONName ""}}
+			Path: "{{.Name}}",
+			{{else}}
+			Path: "{{.JSONName}}",
+			{{end}}
+			Val1: rawToString(one.{{.Name}}),
+			Val2: rawToString(two.{{.Name}}),
+		}, false
+	}
+    {{end}}
+	{{end}}
+    return module.Diff{}, true
+}
+
+{{end}}
+func rawToString(data interface{}) string {
+	switch d := data.(type) {
+	case string:
+		return d
+	case bool:
+		return strconv.FormatBool(d)
+	case int8:
+		return strconv.Itoa(int(d))
+	case int16:
+		return strconv.Itoa(int(d))
+	case int:
+		return strconv.Itoa(int(d))
+	case int32:
+		return strconv.Itoa(int(d))
+	case int64:
+		return strconv.FormatInt(d, 10)
+	case uint:
+		return strconv.FormatUint(uint64(d), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(d), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(d), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(d), 10)
+	case uint64:
+		return strconv.FormatUint(d, 10)
+	case float32:
+		return strconv.FormatFloat(float64(d), 'f', 6, 64)
+	case float64:
+		return strconv.FormatFloat(float64(d), 'f', 6, 64)
+	case complex64:
+		return strconv.FormatComplex(complex128(d), 'f', 6, 64)
+	case complex128:
+		return strconv.FormatComplex(d, 'f', 6, 64)
+	case time.Time:
+		return d.String()
+	default:
+		return fmt.Sprintf("%v", data)
+	}
+}
+
+func compareStringSlice(one, two []string) bool {
+	if len(one) != len(two) {
+		return false
+	}
+	for i := range one {
+		if one[i] != two[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func compareMapString(one, two map[string]string) bool {
+	if (one != nil && two == nil) || (one == nil && two != nil) {
+		return false
+	}
+	for k, v1 := range one {
+		v2, ok := two[k]
+		if !ok {
+			return false
+		}
+		if v1 != v2 {
+			return false
+		}
+	}
+	return true
+}
+
+func compareTime(one, two time.Time) bool {
+	return one.Equal(two)
+}
+
+func maybeJoin(strSlc []string) string {
+	if strSlc == nil {
+		return "<nil>"
+	}
+	return strings.Join(strSlc, ", ")
+}
+
+func compare(one, two interface{}) bool {
+    return cmp.Equal(one, two)
+}
+
+func complexMapToString(m map[string]map[string]string) string {
+	if m == nil {
+		return "nil"
+	}
+	var b strings.Builder
+	for k, v := range m {
+		b.WriteString(fmt.Sprintf("[\"%s\"]", k))
+		if v == nil {
+			b.WriteString("=<nil>\n")
+		} else {
+			for ik, iv := range v {
+				b.WriteString(fmt.Sprintf("[\"%s\"]", ik))
+				b.WriteString(fmt.Sprintf("=%s\n", iv))
+			}
+		}
+	}
+	return b.String()
+}
+
+func mapToString(m map[string]string) string {
+	if m == nil {
+		return "nil"
+	}
+	var b strings.Builder
+	for k, v := range m {
+		b.WriteString(fmt.Sprintf("[\"%s\"]", k))
+		b.WriteString(fmt.Sprintf("=%s\n", v))
+	}
+	return b.String()
+}
+
+func compareComplexMap(one, two map[string]map[string]string) bool {
+	if (one != nil && two == nil) || (one == nil && two != nil) {
+		return false
+	}
+	for k, v1 := range one {
+		v2, ok := two[k]
+		if !ok {
+			return false
+		}
+		if !compareMapString(v1, v2) {
+			return false
+		}
+	}
+	return true
+}
